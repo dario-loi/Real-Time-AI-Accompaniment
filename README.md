@@ -1,100 +1,146 @@
-# Real-Time-Accompaniment
+# Real-Time AI Accompaniment
 
-A real-time intelligent accompaniment system that listens to your playing and generates harmonically appropriate chords.
-
-<div align="center">
-   
-### 🎥 Live Demo
-
----
+> **A Real-Time AI Accompanist that listens, understands, and plays with you.**
 
 ![Real-time chord accompaniment generation while soloist is playing some notes](resources/realtime_example.gif)
 
-</div> 
-
+This project implements a sophisticated **Hybrid AI/Musical-Theory System** capable of generating harmonically appropriate accompaniment in real-time. It combines the predictive power of **Deep Learning (LSTM)** with the responsiveness of a **Rule-Based Musical-Theory System (Ear)**, allowing it to "think ahead" while remaining agile enough to react to your live playing.
 
 > ## 🚧 Work in Progress!
 >
-> This repository will host an AI-powered **Real-Time Accompaniment Generation** system that creates dynamic musical accompaniments on-the-fly. <br>
-> The system will analyze live audio input played by a lead instrument (voice, piano melody, electric guitar, ...) and generate appropriate musical accompaniment in real-time. <br>
 > Currently working on it, so feel free to **star** ⭐️ the repo to stay updated!
 
-## 🔭 Overview
+## 🧠 The Hybrid Engine
 
-This system uses two prediction pipelines:
-1. **Chord-based prediction** (`HarmonyRules`): Analyzes previous chord progressions
-2. **Note-based prediction** (`NotesHarmonyRules`): Analyzes the notes you play and predicts chords using functional harmony theory (Tonic-Subdominant-Dominant)
+The core innovation is the split between **Macro-Prediction** and **Micro-Correction**:
 
+### 1. Macro-Prediction (The "Brain")
+An **LSTM (Long Short-Term Memory)** Neural Network, trained on thousands of songs (from the *Chordonomicon* dataset), predicts the most likely harmonic movements.
+- **Pre-computation**: To ensure zero latency, the AI "thinks ahead", pre-computing probabilistic chord sequences before they are needed.
+- **Context Awareness**: It features a moving window of the last played chords to maintain long-term harmonic coherence.
 
-And runs in real-time with multiple threads:
-- **Timing thread**: Predicts and schedules chords
-- **Playback thread**: Plays chords at the right time
-- **MIDI listener thread**: Captures input notes from your performance
-- **Metronome thread** (optional): Provides rhythmic click track
+### 2. Micro-Correction (The "Ear")
+A deterministic, low-latency module listens to your live notes in the milliseconds before a chord is triggered.
+- **Key Detection**: It automatically detects the key of your performance using the Krumhansl-Schmuckler algorithm.
+- **Real-Time Harmonic Analysis**: It maps your input notes to the current key's functions (Tonic, Dominant, Subdominant) and outputs a distribution over the possible chords.
+- **Refine predictions**: It refines the predictions of the AI by merging the two distributions.
 
-## 🥳 Features
+---
 
-- 🎹 Real-time chord accompaniment generation
-- 🎵 Metronome with configurable empty bars count
-- 🎼 Double pipeline: considering chords sequences first and refining with notes sequences
-- ⚙️ Configurable BPM, time signature, key, and many more parameters
-- 📊 Exponential weighting for recent notes
-- 🔄 Harmonic role-based transitions (T→S→D→T)
+## ⚡ Real-Time Engineering
 
-## 🛠️ Usage: MIDI Routing Setup
+The system runs on a **4-Thread Architecture** designed to minimize latency:
 
-This system requires proper MIDI routing between input, processing, and audio output:
+| Thread | Function | Description |
+|--------|----------|-------------|
+| **Timing** | `Critical` | The system's "Heartbeat". High-priority scheduler that manages the timeline, queries the Predictor, and schedules events. |
+| **Playback** | `Output` | Dedicated thread for FluidSynth audio generation. Decoupled from logic to prevent blocking. |
+| **Listener** | `Input` | Asynchronous MIDI capture. Continuously buffers incoming notes for the "Ear" to analyze. |
+| **Metronome** | `Sync` | Independent click track to keep human and machine locked in the same groove (E3 E3 D4 E4). |
 
-### macOS Setup (Recommended)
-
-1. **Create virtual MIDI ports** using Audio MIDI Setup:
-   - Open `/Applications/Utilities/Audio MIDI Setup.app`
-   - Window → Show MIDI Studio
-   - Double-click "IAC Driver"
-   - Create two ports: `IAC Piano IN` (output from Python) and `IAC Piano OUT` (input to Python)
-
-2. **Choose your input setup**:
-
-   **Option A: Virtual Keyboard (VMPK)**
-   
-   - Download and install [VMPK](https://vmpk.sourceforge.io/)
-   - Configure VMPK:
-     - **MIDI OUT**: `IAC Piano OUT` (sends your playing to Python)
-     - **MIDI IN**: `IAC Piano IN` (receives accompaniment from Python to display notes)
-   - Configure Synth (e.g., SimpleSynth, Surge XT, ...):
-     - Listen to **both** `IAC Piano OUT` AND `IAC Piano IN`
-     - This allows the synth to play both your notes and the generated accompaniment
-   
-   **Option B: Physical MIDI Keyboard**
-   
-   - Connect your MIDI keyboard via USB
-   - Configure Python script:
-     - `INPUT_PORT = 'Your Keyboard Name'` (e.g., 'Digital Piano', 'USB MIDI Keyboard')
-     - `OUTPUT_PORT = 'IAC Piano IN'`
-   - Configure Synth (e.g., SimpleSynth, Logic Pro):
-     - Listen to `IAC Piano IN` if the physical keyboard produces sound, otherwise also add `Your Keyboard Name`
-
-#### ❓ Why This Setup?
-
-VMPK cannot simultaneously:
-- Send MIDI OUT to Python (`IAC Piano OUT`)
-- Receive MIDI IN from Python (`IAC Piano IN`) for audio playback
-- Play those MIDI events
-
-So we use a synth to intercept those channels and play the notes.
-
+---
 
 ## 📂 Project Structure
 
-```
-├── real_time_pipeline.py     # Main pipeline orchestration
-├── chord.py                   # Chord representation & MIDI generation
-├── harmony_rules.py           # Chord-based prediction engine
-├── notes_harmony_rules.py     # Note-based prediction engine
-├── midi_listener.py           # Real-time MIDI input capture
-└── utils.py                   # Helper functions
+Modular architecture included in the `src` package:
+
+```text
+src/
+├── __init__.py
+├── audio/                      # Audio & MIDI I/O
+│   ├── metronome.py            # Plays metronome clicks with bar accents
+│   ├── midi_io.py              # MIDI playback and I/O utilities
+│   ├── midi_listener.py        # Asynchronous MIDI input listener (The "Ear" input)
+│   └── synth.py                # Low-latency FluidSynth wrapper for playback
+├── config.py                   # Central configuration (BPM, Ports, Constants)
+├── model/                      # AI Core
+│   ├── ai_harmony.py           # Inference engine wrapping the LSTM model
+│   ├── lstm_model.py           # Base LSTM architecture definition
+│   ├── train/                  # Training scripts
+│   │   ├── __init__.py
+│   │   ├── dataloader.py       # Dataloader optimized for chord sequences
+│   │   └── train.py            # Main model training loop
+│   └── vocabulary.py           # Tokenizer (Chord <-> Index mapping)
+├── music/                      # Music Theory Logic
+│   ├── __init__.py
+│   ├── chord.py                # Chord object representation and MIDI generation
+│   ├── ear.py                  # Real-time harmonic analysis (Control System)
+│   └── key_detector_major.py   # Krumhansl-Schmuckler Key Detection
+├── pipeline/                   # System Orchestration
+│   ├── __init__.py
+│   ├── playback.py             # Dedicated thread for chord playback
+│   ├── pipeline.py             # Main pipeline manager (Threading & Timing)
+│   └── predictor.py            # Decision engine (Fuses AI + Ear predictions)
+└── utils/                      # Utilities
+    ├── __init__.py
+    ├── logger.py               # Thread-safe logging setup
+    └── music_theory.py         # Core theory rules and Roman numeral conversion
 ```
 
-## 📬 Stay Updated
+---
 
-Development is actively ongoing. Hope you are as excited as I am!
+## 🛠️ Installation
+
+### 1. System Dependencies
+You need **FluidSynth** installed on your system for audio generation.
+- **macOS**: `brew install fluidsynth`
+- **Linux**: `sudo apt-get install fluidsynth`
+- **Windows**: using Chocolatey: `choco install fluidsynth`
+
+### 2. Python Dependencies
+Install the required packages:
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## 🎹 Usage
+
+To access the entry point run `python main.py`
+
+
+### 🛠️ MIDI Routing Setup (macOS)
+This system requires proper MIDI routing between input, processing, and audio output.
+
+Create virtual MIDI ports using **Audio MIDI Setup**:
+1. Open `/Applications/Utilities/Audio MIDI Setup.app`
+2. **Window** → **Show MIDI Studio**
+3. Double-click **IAC Driver**
+4. Create two ports: `IAC Piano IN` (Output from Python) and `IAC Piano OUT` (Input to Python)
+
+#### Choose your Input Method
+
+**Option A: Virtual Keyboard (VMPK) 💻**
+1. **Download & Install VMPK**
+2. **Configure VMPK**:
+   - **MIDI OUT**: `IAC Piano OUT` (Sends your playing to Python)
+   - **MIDI IN**: `IAC Piano IN` (Receives accompaniment from Python to display notes)
+   - *Why?* This allows the synth to play both your notes and the generated accompaniment.
+
+**Option B: Physical MIDI Keyboard 🎹**
+1. **Connect your Keyboard** via USB.
+2. **Configure Python Script** (`src/config.py`):
+   - `INPUT_PORT = 'Your Keyboard Name'` (e.g., 'Digital Piano', 'USB MIDI Keyboard')
+
+#### ❓ Why This Setup?
+The system needs 2 ports to:
+1. Send MIDI OUT to Python (OUTPUT_PORT: `IAC Piano OUT`)
+2. Receive MIDI IN from Python (INPUT_PORT: `IAC Piano IN`/`Your Keyboard Name`) for audio playback
+
+
+### Configuration
+All settings (BPM, Key, Ports, Model Params) are centralized in `src/config.py`. Edit this file to customize your session.
+
+## Citation
+
+Chordonomicon dataset:
+
+```bibtex
+@article{kantarelis2024chordonomicon,
+  title={CHORDONOMICON: A Dataset of 666,000 Songs and their Chord Progressions},
+  author={Kantarelis, Spyridon and Thomas, Konstantinos and Lyberatos, Vassilis and Dervakos, Edmund and Stamou, Giorgos},
+  journal={arXiv preprint arXiv:2410.22046},
+  year={2024}
+}
+```
