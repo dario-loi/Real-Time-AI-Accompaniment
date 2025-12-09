@@ -7,7 +7,7 @@ from src.config import OUTPUT_PORT, INPUT_PORT, WINDOW_SIZE
 from src.utils.logger import setup_logger
 
 # Config
-BPM = 120
+BPM = 100
 KEY = 'C'
 BEATS_PER_BAR = 4.0
 SEQUENCE_LENGTH = 10

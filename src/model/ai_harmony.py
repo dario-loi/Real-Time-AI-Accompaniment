@@ -18,7 +18,7 @@ from src.model.lstm_model import ChordLSTM
 from src.config import (
     MODEL_PATH, VOCAB_PATH, 
     HIDDEN_SIZE, EMBEDDING_DIM, NUM_LAYERS, WINDOW_SIZE, DROPOUT, 
-    PAD_IDX, UNKNOWN_IDX
+    PAD_IDX, UNKNOWN_IDX, SAMPLING_TOP_K, SAMPLING_TEMPERATURE, USE_DETERMINISTIC_SAMPLING
 )
 from src.utils.logger import setup_logger
 
@@ -74,7 +74,8 @@ class AIHarmonyRules:
     # Predict next chord distribution using LSTM-based model
     # Can use both deterministic (argmax) and probabilistic sampling
     # Returns either roman numeral or (root, type) tuple based on return_roman flag 
-    def get_next_chord_distribution(self, chord_history: List[str], return_roman: bool = False, deterministic_sampling: bool = True, temperature: float = 1.0, top_k: int = 0) -> Tuple[str, Dict[str, float]]:
+    def get_next_chord_distribution(self, chord_history: List[str], return_roman: bool = False, deterministic_sampling: bool = USE_DETERMINISTIC_SAMPLING, 
+                                    temperature: float = SAMPLING_TEMPERATURE, top_k: int = SAMPLING_TOP_K) -> Tuple[str, Dict[str, float]]:
 
         if not chord_history:
             # Fallback for empty history
@@ -128,13 +129,14 @@ class AIHarmonyRules:
                 # Get indices of top k elements
                 # Use argpartition for efficiency (O(n)) vs sort (O(n log n))
                 if top_k < len(probs_np):
+                     # We want the indices of the largest top_k elements
                     ind = np.argpartition(probs_np, -top_k)[-top_k:]
                     
                     # Create a mask for zeroing out everything else
                     mask = np.zeros_like(probs_np, dtype=bool)
                     mask[ind] = True
                     
-                    # Apply mask
+                    # Apply mask (force zero probability for non-top-k)
                     probs_np[~mask] = 0.0
 
             # Re-normalize probabilities 
@@ -145,6 +147,8 @@ class AIHarmonyRules:
                 probs_np[PAD_IDX] = 0
                 probs_np = probs_np / probs_np.sum() # Re-normalize again
 
+            # Explicit check to avoid ValueError in random.choices if sums to 0 (floating point issues)
+            # though renormalization above should fix it
             predicted_idx = random.choices(range(self.vocab_size), weights=probs_np)[0]
 
         predicted_roman = self.idx_to_chord[predicted_idx]
@@ -176,9 +180,9 @@ class AIHarmonyRules:
     # precomputes a sequence of chords based on argmax prediction
     # returns list of (roman_numeral, probability_dict) tuples
     def precompute_sequence(self, start_history: List[str], length: int, 
-                            deterministic_sampling: bool = True,
-                            temperature: float = 1.0,
-                            top_k: int = 0) -> List[Tuple[str, Dict[str, float]]]:
+                            deterministic_sampling: bool = USE_DETERMINISTIC_SAMPLING,
+                            temperature: float = SAMPLING_TEMPERATURE,
+                            top_k: int = SAMPLING_TOP_K) -> List[Tuple[str, Dict[str, float]]]:
 
         sequence = []
         current_history = list(start_history)

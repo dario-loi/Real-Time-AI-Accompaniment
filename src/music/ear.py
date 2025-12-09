@@ -95,13 +95,14 @@ class Ear:
     
     # Computes the probability distribution for the next chord based on the played notes
     # Uses role transitions (T->S->D pattern) to guide harmonic progression
+    # PROPAGATES UNCERTAINTY: Instead of picking one role, it calculates the weighted sum of future roles
     def get_chord_probability_distribution(self, note_window: List[Tuple[int, float]]) -> Dict[str, float]:
 
         # 1. Calculate role scores from played notes
         role_scores = self._compute_window_scores(note_window)
         if sum(role_scores.values()) == 0:
             return {}
-        
+            
         # 2. Determine current role and use weighted sampling for next role
         max_window_role = max(role_scores, key=role_scores.get)
         
@@ -115,10 +116,10 @@ class Ear:
         # Weighted sampling: choose next role probabilistically
         roles, weights = zip(*transitions)
         chosen_role = random.choices(roles, weights=weights)[0]
-        
+
         logger.info("-" * 60 + "[PREDICTION]" + "-" * 60)
         logger.info(f"[EAR] Note window: {note_names} | Scores: T={role_scores['T']:.3f}, S={role_scores['S']:.3f}, D={role_scores['D']:.3f} | From {max_window_role} to {chosen_role}")
-        
+
         # 3. Distribute: 90% to chosen role, 10% to others
         chord_probs = {}
         for role in ['T', 'S', 'D']:

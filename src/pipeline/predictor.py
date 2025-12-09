@@ -20,7 +20,7 @@ from src.music.chord import Chord
 from src.music.key_detector_major import KeyDetector
 from src.utils.music_theory import roman_to_chord, roman_to_compact, get_top_k, format_distribution
 from src.utils.logger import setup_logger
-from src.config import CHORDS_TO_PRECOMPUTE
+from src.config import CHORDS_TO_PRECOMPUTE, AI_WEIGHT
 
 logger = setup_logger()
 
@@ -183,26 +183,31 @@ class Predictor:
         # 4.2. Get Ear Distribution for next chord (based on played notes)
         note_probs = self.ear.get_chord_probability_distribution(note_window)
         
-        # 4.3. Combine distributions by multiplying probabilities (gets intersection)
-        # TODO: try Weighted Sum - "Linear Opinion Pool"
+        # 4.3. Combine distributions by Weighted Sum (Linear Opinion Pool)        
         final_probs = {}
         all_chords = set(ai_probs.keys()) | set(note_probs.keys())
         
+        # Check if Ear is active (has any predictions)
+        ear_is_active = len(note_probs) > 0
+
         for chord in all_chords:
-            p_ai = ai_probs.get(chord, 0.001)
-            if not note_probs:
-                p_note = 1.0
-            else:
-                p_note = note_probs.get(chord, 0.001)
+            p_ai = ai_probs.get(chord, 0.0)
             
-            final_probs[chord] = p_ai * p_note
+            if not ear_is_active:
+                # If Ear heard nothing (no notes played), rely entirely on AI
+                final_probs[chord] = p_ai
+            else:
+                # Classic Weighted Sum
+                # If chord is missing in Ear, p_note becomes 0.0, dragging down the score
+                p_note = note_probs.get(chord, 0.0)
+                final_probs[chord] = (AI_WEIGHT * p_ai) + ((1 - AI_WEIGHT) * p_note)
             
         # Logging Top-5 for Debugging
         top_ai = get_top_k(ai_probs)
         top_ear = get_top_k(note_probs)
         top_final = get_top_k(final_probs)
 
-        logger.info(f"[REFINEMENT] Step Combination:")
+        logger.info(f"[REFINEMENT] Step Combination (AI_WEIGHT={AI_WEIGHT}):")
         logger.info(f"  AI (Chords):  {format_distribution(top_ai, self.key)}")
         logger.info(f"  EAR (Notes):  {format_distribution(top_ear, self.key)}")
         logger.info(f"  COMBINED:     {format_distribution(top_final, self.key)}")
