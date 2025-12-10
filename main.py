@@ -5,34 +5,14 @@
 from src.pipeline import RealTimePipeline
 from src.config import OUTPUT_PORT, INPUT_PORT, WINDOW_SIZE
 from src.utils.logger import setup_logger
+from src.utils.music_theory import get_starting_chord
 
 # Config
 BPM = 100
-KEY = 'C'
+DEFAULT_KEY = 'C'
 BEATS_PER_BAR = 4.0
 SEQUENCE_LENGTH = 10
 
-def get_valid_key():
-    valid_keys = ['C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B']
-    
-    # Prompt the user
-    try:
-        user_input = input(f"Enter Key (default {KEY}): ").strip()
-        print()
-    except EOFError:
-        user_input = ""
-    
-    if not user_input:
-        return KEY
-        
-    # Simple capitalization fix
-    user_input = user_input[0].upper() + user_input[1:] if len(user_input) > 0 else user_input
-    
-    if user_input in valid_keys:
-        return user_input
-    else:
-        logger.warning(f"Invalid key '{user_input}'. Using default '{KEY}'.")
-        return KEY
 
 logger = setup_logger()
 
@@ -42,11 +22,16 @@ if __name__ == "__main__":
     logger.info("REAL-TIME ACCOMPANIMENT PIPELINE")
     logger.info("=" * 50)
     
-    current_key = get_valid_key()
+    # Interactive Setup
+    system_key, start_root, start_quality = get_starting_chord(DEFAULT_KEY)
+    
+    logger.info(f"Starting System: Key={system_key} | StartChord={start_root}{start_quality}")
     
     try:
         pipeline = RealTimePipeline(
-            key=current_key,                            # Musical key (only majors for now)
+            key=system_key,                             # Musical key (for AI context)
+            starting_root=start_root,                   # Actual starting chord root
+            starting_quality=start_quality,             # Actual starting chord quality
             bpm=BPM,                                    # Tempo in BPM
             beats_per_bar=BEATS_PER_BAR,                # How many beats in one bar
             window_size=WINDOW_SIZE,                    # How many chords to consider for prediction

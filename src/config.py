@@ -99,8 +99,13 @@ INTERVALS_MAP = {
     '9': [0, 4, 7, 10, 14],    # Dominant 9th
     'add9': [0, 4, 7, 14],     # Add 9th
     'dim7': [0, 3, 6, 9],      # Diminished 7th
-    'm7b5': [0, 3, 6, 10]      # Half-Diminished 7th
+    'm7b5': [0, 3, 6, 10],     # Half-Diminished 7th
+    'msus2': [0, 2, 7],        # Minor Suspended 2nd (Same intervals, implies minor context)
+    'msus4': [0, 5, 7]         # Minor Suspended 4th (Same intervals, implies minor context)
 }
+
+MINOR_QUALITIES = ['minor', 'm', 'm7', 'm9', 'm11', 'm13', 'dim', 'dim7', 'm7b5', 'half_dim7', 'minor6', 'msus2', 'msus4']
+DIMINISHED_QUALITIES = ['dim', 'dim7', 'm7b5', 'half_dim7']
 
 # Chromatic Roman to Semitone Map (Trailing Accidentals)
 ROMAN_TO_SEMITONE = {
@@ -116,6 +121,29 @@ ROMAN_TO_SEMITONE = {
     'VI': 9, 'vi': 9,
     'VIIb': 10, 'viib': 10, 'VI#': 10, 'vi#': 10,
     'VII': 11, 'vii': 11
+}
+
+SUFFIX_MAP = {
+    '7':      '7',
+    'm7':     '7',    # we can lose minor since it's not used
+    'ø7':     'm7b5',
+    'm7b5':   'm7b5',
+    'half_dim7': 'm7b5',
+    '°7':     'dim7',
+    'dim7':   'dim7',
+    'dim':    'dim',
+    '°':      'dim',
+    'sus2':   'sus2',
+    'sus4':   'sus4',
+    'msus4': 'sus4',    # we can lose minor since it's not used
+    'msus2': 'sus2',    # we can lose minor since it's not used
+    'add9':   'add9',
+    'aug':    'aug',
+    '9':      '7',      # LSTM never saw 9ths
+    'maj7':   'maj7',
+    'maj9':   'maj9',
+    'maj11':  'maj11',
+    'maj13':  'maj13',
 }
 
 # Map semitone intervals to Roman Numerals (Chromatic - Trailing)

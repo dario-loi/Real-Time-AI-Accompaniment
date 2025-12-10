@@ -29,8 +29,8 @@ logger = setup_logger()
 
 class RealTimePipeline:
     
-    def __init__(self, key: str = 'C', chord_type: str = 'major', bpm: int = DEFAULT_BPM, 
-                 beats_per_bar: float = DEFAULT_BEATS_PER_BAR, window_size: int = WINDOW_SIZE, 
+    def __init__(self, key: str = 'C', starting_root: Optional[str] = None, starting_quality: str = 'major', 
+                 bpm: int = DEFAULT_BPM, beats_per_bar: float = DEFAULT_BEATS_PER_BAR, window_size: int = WINDOW_SIZE, 
                  max_sequence_length: int = DEFAULT_MAX_SEQUENCE_LENGTH, output_port: str = OUTPUT_PORT, 
                  input_port: Optional[str] = None, enable_input_listener: bool = False, 
                  enable_metronome: bool = True, empty_bars_count: int = EMPTY_BARS_COUNT,
@@ -88,7 +88,8 @@ class RealTimePipeline:
         self.start_time = None                      # Pipeline start time
         
         # Starting Chord
-        self.starting_chord = Chord(key, chord_type, bpm, beats_per_bar)
+        root = starting_root if starting_root else key
+        self.starting_chord = Chord(root, starting_quality, bpm, beats_per_bar)
 
     # MAIN THREAD: handles all chord scheduling, prediction and timing alignment
     def _timing_thread(self):

@@ -1,28 +1,34 @@
+# ==================================================================
+# Music Theory Utility Functions
+# ==================================================================
+
 import re
 from typing import Tuple, List, Dict
-from src.config import NOTES, FLAT_TO_SHARP, ROMAN_TO_SEMITONE, INTERVAL_TO_ROMAN
+from src.utils.logger import setup_logger
+from src.config import NOTES, FLAT_TO_SHARP, ROMAN_TO_SEMITONE, INTERVAL_TO_ROMAN, MINOR_QUALITIES, DIMINISHED_QUALITIES, SUFFIX_MAP
+
+logger = setup_logger()
 
 def normalize_note(note: str) -> str:
     """Normalizes note name to sharp notation (e.g., Bb -> A#)."""
     return FLAT_TO_SHARP.get(note, note)
 
 def roman_to_chord(tonic: str, roman: str) -> Tuple[str, str]:
-    """Converts Roman numeral to (Root, Quality) tuple. Handles 7ths and extensions."""
+    """Converts Roman numeral to (Root, Quality) tuple."""
     match = re.match(r'^(VII|VI|V|IV|III|II|I|vii|vi|v|iv|iii|ii|i)([b#]?)(°?)(.*)$', roman)
     
     if not match:
-        print(f"[ERROR] Invalid Roman numeral: {roman} in roman_to_chord()")
+        logger.error(f"[ERROR] Invalid Roman numeral: {roman} in roman_to_chord()")
         return (tonic, 'major') # Fallback
 
     numeral, accidental, degree_sym, suffix = match.groups()
     
     # Reconstruct base for semitone lookup (Numeral + Accidental)
     base_roman = numeral + accidental
-    
+
+    # 1. Determine base quality
     if base_roman in ROMAN_TO_SEMITONE:
         interval = ROMAN_TO_SEMITONE[base_roman]
-        
-        # Determine base quality
         if degree_sym == '°':
             quality = 'dim'
         elif numeral.islower(): 
@@ -30,9 +36,10 @@ def roman_to_chord(tonic: str, roman: str) -> Tuple[str, str]:
         else:
             quality = 'major'
     else:
+        logger.error(f"[ERROR] Invalid Roman numeral: {roman} in roman_to_chord() - unknown numeral: {base_roman}")
         return (tonic, 'major') # Fallback
 
-    # Determine Root
+    # 2. Determine Root
     try:
         tonic_idx = NOTES.index(normalize_note(tonic))
     except ValueError:
@@ -41,50 +48,26 @@ def roman_to_chord(tonic: str, roman: str) -> Tuple[str, str]:
     root_idx = (tonic_idx + interval) % 12
     root_note = NOTES[root_idx]
     
-    # Determine Final Quality based on base quality + suffix
+    # 3. Determine Final Quality based on base quality + suffix
     final_quality = quality
     
     if suffix == '7':
-        if quality == 'major': final_quality = '7'        # V -> V7
-        elif quality == 'minor': final_quality = 'm7'     # ii -> ii7
-        elif quality == 'dim': final_quality = 'm7b5'     # vii° -> vii°7 (half-dim) -> m7b5
+        if quality == 'major': final_quality = '7'            # C 7 -> C7
+        elif quality == 'minor': final_quality = 'm7'     # Cminor7 -> Cm7
+        elif quality == 'dim': final_quality = 'dim7'         # C°7 -> Cdim7
+
+    else:
+        # Use suffix map to get right quality
+        if suffix in SUFFIX_MAP:
+            final_quality = SUFFIX_MAP[suffix]
         
-    elif suffix == 'maj7':
-        final_quality = 'maj7'
-        
-    elif suffix == '°7' or suffix == 'dim7':
-        final_quality = 'dim7'
-        
-    elif suffix == 'sus2':
-        final_quality = 'sus2'
-        
-    elif suffix == 'sus4':
-        final_quality = 'sus4'
-        
-    elif suffix == 'add9':
-        final_quality = 'add9'
-        
-    elif suffix == '9':
-        final_quality = '9'
-        
-    elif suffix == 'maj9':
-        final_quality = 'maj9'
-        
-    elif suffix == 'maj11':
-        final_quality = 'maj11'
-        
-    elif suffix == 'maj13':
-        final_quality = 'maj13'
-        
-    # Override if base was dim and no suffix changed it
-    elif quality == 'dim' and not suffix:
-        final_quality = 'dim'
-        
-    # Handle specific common cases directly
-    if roman == 'vii°7': final_quality = 'dim7'
-    if roman == 'ii7': final_quality = 'm7'
-    if roman == 'Imaj7': final_quality = 'maj7'
-    if roman == 'V7': final_quality = '7'
+        # If no suffix, keep base quality (major/minor/dim)
+        elif not suffix:
+            final_quality = quality
+            
+        else:
+            logger.error(f"[ERROR] Unknown quality: {quality} (suffix='{suffix}') in roman_to_chord()")
+            final_quality = 'major'
         
     return (root_note, final_quality)
 
@@ -96,6 +79,7 @@ def chord_to_roman(tonic: str, root: str, quality: str) -> str:
         root_idx = NOTES.index(normalize_note(root))
     except ValueError:
         return 'I'
+
     interval = (root_idx - tonic_idx) % 12
     
     # Use chromatic map for base roman
@@ -109,34 +93,13 @@ def chord_to_roman(tonic: str, root: str, quality: str) -> str:
     else:
         numeral = base_roman
     
-    # Definisci quali qualities sono minori (lowercase)
-    minor_qualities = ['minor', 'm', 'm7', 'm9', 'm11', 'm13', 'dim', 'dim7', 'm7b5', 'half_dim7', 'minor6']
-    
-    # Determina il case (upper/lower)
-    if quality in minor_qualities:
+    # Determine case (upper/lower)
+    if quality in MINOR_QUALITIES:
         base_numeral = numeral.lower() + accidental
     else:
         base_numeral = numeral.upper() + accidental
-    
-    # Aggiungi suffissi per qualità speciali
-    suffix_map = {
-        '7': '7',
-        'm7': '7',          # aldready lowercase
-        'dim': '°',
-        'dim7': '°7',
-        'm7b5': 'ø7',
-        'half_dim7': 'ø7',
-        'sus4': 'sus4',
-        'sus2': 'sus2',
-        'aug': '+',
-        'add9': 'add9',
-        'maj7': 'maj7',
-        'maj9': 'maj9',
-        'maj11': 'maj11',
-        'maj13': 'maj13',
-    }
-    
-    suffix = suffix_map.get(quality, '')
+
+    suffix = SUFFIX_MAP.get(quality, '')
     return base_numeral + suffix
 
 def compact_chord(root: str, quality: str) -> str:
@@ -147,13 +110,17 @@ def compact_chord(root: str, quality: str) -> str:
     elif quality == 'aug': suffix = '+'
     elif quality == 'm7': suffix = 'm7'
     elif quality == 'm7b5': suffix = 'm7b5'
+    elif quality == 'msus2': suffix = 'msus2'
+    elif quality == 'msus4': suffix = 'msus4'
     elif quality != 'major': suffix = quality
     return f"{root}{suffix}"
 
 def parse_compact_chord(chord_str: str) -> Tuple[str, str]:
     """Parses compact string (e.g., 'Cm7', 'Cmaj7') into (Root, Quality)."""
     match = re.match(r'^([A-G][#b]?)(.*)$', chord_str)
-    if not match: return (chord_str, 'major')
+    if not match: 
+        logger.error(f"[ERROR] Invalid compact chord: {chord_str} in parse_compact_chord()")
+        return (chord_str, 'major')
     
     root, q_str = match.groups()
     
@@ -210,6 +177,10 @@ def parse_compact_chord(chord_str: str) -> Tuple[str, str]:
         quality = 'maj11'
     elif q_str_lower in ['maj13']:
         quality = 'maj13'
+    elif q_str_lower in ['msus2', 'm(sus2)', 'minorsus2', '-sus2', 'minsus2']:
+        quality = 'msus2' 
+    elif q_str_lower in ['msus4', 'm(sus4)', 'minorsus4', '-sus4', 'minsus4', 'msus', 'minsus']:
+        quality = 'msus4'
     else:
         quality = 'major'  # Default fallback
         
@@ -242,3 +213,49 @@ def format_distribution(dist_items: List[Tuple[str, float]], key: str) -> str:
         except:
             formatted.append(f"{roman}: {p:.2f}")
     return ", ".join(formatted)
+
+# Returns (System Key, Root, Quality) given user input
+def get_starting_chord(default_key: str):
+    prompt = f"Enter Starting Chord (e.g. C, Am, G7, Bbmaj7) [default {default_key}]: "
+    
+    try:
+        user_input = input(prompt).strip()
+        print()
+    except EOFError:
+        logger.info("[ERROR] Starting chord not recognized, using default C.")
+        user_input = ""
+    
+    if not user_input:
+        return default_key, default_key, 'major' # System Key, Root, Quality
+        
+    # Parse input
+    root, quality = parse_compact_chord(user_input)
+    
+    # Key selection logic
+    # 1. Minor Context -> Relative Major (Root + 3 semitones)
+    if quality in MINOR_QUALITIES and quality not in DIMINISHED_QUALITIES:
+        try:
+            root_idx = NOTES.index(normalize_note(root))
+            key_idx = (root_idx + 3) % 12
+            system_key = NOTES[key_idx]
+            logger.info(f"[INFO] Detected Minor context ({root}{quality}). Setting System Key to Relative Major: {system_key}")
+        except ValueError:
+            logger.warning(f"[WARNING] Could not determine key for {root}. Defaulting to C.")
+            system_key = 'C'
+
+    # 2. Diminished/Leading Tone Context -> Semitone Up Major (Root + 1 semitone)
+    elif quality in DIMINISHED_QUALITIES:
+        try:
+            root_idx = NOTES.index(normalize_note(root))
+            key_idx = (root_idx + 1) % 12
+            system_key = NOTES[key_idx]
+            logger.info(f"[INFO]Detected diminished context ({root}{quality}). Setting System Key to Resolution Major: {system_key}")
+        except ValueError:
+            logger.warning(f"[WARNING] Could not determine key for {root}. Defaulting to C.")
+            system_key = 'C'
+
+    # 3. Major/Dominant/Sus Context -> Root Major
+    else:
+        system_key = normalize_note(root)
+        
+    return system_key, root, quality
