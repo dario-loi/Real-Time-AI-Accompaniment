@@ -3,7 +3,8 @@
 # ==================================================================================================================
 # Orchestrates the real-time accompaniment pipeline
 # Contains timing thread which is the main thread for prediction and timing alignment
-# Has start() function which is the entry point for the pipeline
+# Uses Conductor for dynamic BPM and timing
+# Contains start() function: main entry point for the pipeline
 # ==================================================================================================================
 
 import time
@@ -24,6 +25,8 @@ from src.pipeline.playback import PlaybackThread
 from src.audio.metronome import Metronome
 from src.audio.midi_listener import MIDIListener
 from src.audio.midi_listener import create_playback_synth
+from src.audio.clock import Conductor
+from src.music.bpm_detector import BPMDetector
 
 logger = setup_logger()
 
@@ -34,28 +37,35 @@ class RealTimePipeline:
                  max_sequence_length: int = DEFAULT_MAX_SEQUENCE_LENGTH, output_port: str = OUTPUT_PORT, 
                  input_port: Optional[str] = None, enable_input_listener: bool = False, 
                  enable_metronome: bool = True, empty_bars_count: int = EMPTY_BARS_COUNT,
-                 enable_synth: bool = True):
+                 enable_synth: bool = True, enable_dynamic_bpm: bool = True):
         
         # Configuration
         self.key = key
         self.bpm = bpm
         self.beats_per_bar = beats_per_bar
-        self.chord_duration_seconds = (beats_per_bar * 60.0) / bpm
         self.window_size = window_size
         self.max_sequence_length = max_sequence_length
         self.output_port = output_port
         self.input_port = input_port
         self.enable_input_listener = enable_input_listener
         self.enable_metronome = enable_metronome
+        self.enable_dynamic_bpm = enable_dynamic_bpm
         self.empty_bars_count = empty_bars_count
         self.enable_synth = enable_synth
         
-        # Delay calculation: how many seconds to wait before starting the sequence
-        if self.enable_metronome:
-            self.delay_seconds = empty_bars_count * beats_per_bar * (60.0 / bpm)
+        # Conductor
+        self.conductor = Conductor(
+            initial_bpm=bpm, 
+            beats_per_bar=beats_per_bar,
+            on_tempo_change=self._on_tempo_change
+        )
+        
+        # BPM Detector (Dynamic Timing)
+        if self.enable_dynamic_bpm:
+            self.bpm_detector = BPMDetector(conductor=self.conductor)
         else:
-            self.delay_seconds = DELAY_START_SECONDS
-            
+            self.bpm_detector = None
+        
         # Predictor (Predicts the next chord)
         self.predictor = Predictor(key, bpm, beats_per_bar, window_size)
             
@@ -64,19 +74,30 @@ class RealTimePipeline:
         self.synth_listener = None
         if self.enable_synth and self.output_port:
             try:
+                # Synth listener monitors the output port (loopback)
                 self.synth, self.synth_listener = create_playback_synth(midi_port_name=self.output_port)
                 logger.info(f"[SYNTH] FluidSynth initialized on {self.output_port}")
             except Exception as e:
                 logger.error(f"[SYNTH] Failed to initialize FluidSynth: {e}")
 
-        # MIDI Input Listener (for Ear)
+        # MIDI Input Listener (for Ear and BPM)
         if self.enable_input_listener and self.input_port:
-            self.midi_listener = MIDIListener(port_name=self.input_port, synth_player=self.synth)
+            self.midi_listener = MIDIListener(
+                port_name=self.input_port, 
+                synth_player=self.synth,
+                bpm_detector=self.bpm_detector
+            )
         else:
             self.midi_listener = None
         
-        # Metronome
-        self.metronome = Metronome(self.bpm, self.beats_per_bar, self.empty_bars_count)
+        # Metronome (receives conductor)
+        self.metronome = Metronome(
+            self.bpm, 
+            self.beats_per_bar, 
+            self.empty_bars_count,
+            conductor=self.conductor
+        )
+        
         self.metronome_thread = None
         self.timing_thread = None
         self.playback = None
@@ -91,71 +112,107 @@ class RealTimePipeline:
         root = starting_root if starting_root else key
         self.starting_chord = Chord(root, starting_quality, bpm, beats_per_bar)
 
+    @property
+    def chord_duration_seconds(self) -> float:
+        """Get current chord duration in seconds (based on current BPM)."""
+        if self.conductor:
+            return self.conductor.bar_duration
+        # Fallback
+        return (self.beats_per_bar * 60.0) / self.bpm
+
+    def _on_tempo_change(self, old_bpm, new_bpm):
+        """Callback for Conductor tempo changes."""
+        elapsed_s = time.time() - self.start_time if self.start_time else 0
+        logger.info(f"[{elapsed_s:.1f}s] [BPM] Update: {old_bpm:.1f} -> {new_bpm:.1f} BPM")
+        self.bpm = new_bpm
+        
+        # Update predictor so future chords have correct duration
+        self.predictor.set_bpm(new_bpm)
+
+
+
     # MAIN THREAD: handles all chord scheduling, prediction and timing alignment
     def _timing_thread(self):
         
         # Get starting chord roman
         start_roman = chord_to_roman(self.key, self.starting_chord.root, self.starting_chord.chord_type)
         
-        # First thing to do is to seed the window and compute the initial sequence with LSTM
+        # Seed window
         self.predictor.chord_window.append(start_roman)
         self.predictor.precomputed_sequence = self.predictor.ai.precompute_sequence(list(self.predictor.chord_window), CHORDS_TO_PRECOMPUTE)
         self.predictor.precomputed_idx = 0
 
-        # Only then start the timer to signal the start of the pipeline
-        self.start_time = time.time()
+        # Start Conductor (sets t0)
+        self.conductor.start()
+        self.start_time = self.conductor.start_time
         
-        # Wait for delay
-        time.sleep(self.delay_seconds)
+        # Delay (in bars) before first chord
+        start_delay_seconds = self.empty_bars_count * self.conductor.bar_duration
         
+        # Wait for start delay
+        first_chord_time = self.start_time + start_delay_seconds
+        while self.is_running:
+            if time.time() >= first_chord_time:  # Exact timing
+                break
+            time.sleep(0.01)
+
         # Play starting chord
         self.chord_objects.append(self.starting_chord)
         
+        # Initialize incremental timing: track when the last chord was scheduled
+        last_chord_time = first_chord_time
+        
         # Then set the current chord index to 1
         self.current_chord_idx = 1
-        logger.info(f"[{time.time() - self.start_time:.1f}s][🎶PLAYING STEP 1🎶] {self.starting_chord}")
+        elapsed_s = time.time() - self.start_time if self.start_time else 0
+        logger.info(f"[{elapsed_s:.1f}s] [🎶PLAYING STEP 1🎶] {self.starting_chord} (BPM: {self.bpm:.1f})")
         
         while self.is_running and self.current_chord_idx < self.max_sequence_length:
-            # Timing
-            next_chord_time = self.start_time + self.delay_seconds + (self.current_chord_idx * self.chord_duration_seconds)
-            wait_time = next_chord_time - time.time()
-            if wait_time > 0:
-                time.sleep(wait_time)
+            # INCREMENTAL TIMING: Next chord is one bar after the last chord
+            target_time = last_chord_time + self.conductor.bar_duration
+            
+            # Wait until target time (notes are collected during this period)
+            while self.is_running:
+                wait_time = target_time - time.time()
+                if wait_time <= 0:
+                    break
+                time.sleep(min(wait_time, 0.05))
                 
-            # Prediction
-            # 1. Get next candidate from Predictor (Precomputed AI)
+            if not self.is_running: break
+
+            # Prediction (after notes collected)
             candidate_chord = self.predictor.get_next_prediction()
             
             if not candidate_chord:
                 logger.warning("No prediction available, ending sequence.")
                 break
                 
-            # 2. Refine with Ear
             final_chord = self.predictor.refine_prediction(candidate_chord, self.midi_listener)
             
             # WAITING LOGIC: if no notes played, wait for input
-            # In the meantime, keep time going 
             if not final_chord:
-                logger.info("[SYSTEM] No notes played, waiting...")
+                elapsed_s = time.time() - self.start_time if self.start_time else 0
+                logger.info(f"[{elapsed_s:.1f}s] [SYSTEM] No notes played, waiting...")
+                last_chord_time = target_time
                 self.current_chord_idx += 1
                 if self.midi_listener: self.midi_listener.clear_note_window()
                 continue
                 
-            # 3. Schedule final chord
+            # Schedule final chord
             self.chord_objects.append(final_chord)
+            last_chord_time = target_time
             
-            # 4. Sync key with predictor (in case key detector changed it)
+            # Sync key with predictor
             if self.key != self.predictor.key:
                 self.key = self.predictor.key
             
-            # 5. Update History (Important for re-computation!)
-            # If the final chord matches the one in the history, then go to next
-            # Otherwise, update history by pre-computing again
+            # Update History
             final_roman = chord_to_roman(self.key, final_chord.root, final_chord.chord_type)
             self.predictor.update_history(final_roman)
             
             self.current_chord_idx += 1
-            logger.info(f"[{time.time() - self.start_time:.1f}s][🎶PLAYING STEP {self.current_chord_idx}🎶] {final_chord}")
+            elapsed_s = target_time - self.start_time if self.start_time else 0
+            logger.info(f"[{elapsed_s:.1f}s] [🎶PLAYING STEP {self.current_chord_idx}🎶] {final_chord}")
             
             if self.midi_listener: self.midi_listener.clear_note_window()
             
@@ -181,6 +238,7 @@ class RealTimePipeline:
         if self.enable_metronome:
             self.metronome_thread = threading.Thread(
                 target=self.metronome.run,
+                # For static metronome fallback (unused if conductor present, but required by signature)
                 args=(lambda: self.start_time, lambda: self.is_running, self.max_sequence_length),
                 daemon=True,
             )
@@ -193,13 +251,19 @@ class RealTimePipeline:
         threads.append(self.timing_thread)
         
         # 3. Playback (Synth for output)
-        self.playback = PlaybackThread(self.chord_objects, lambda: self.start_time, 
-                           self.delay_seconds, self.chord_duration_seconds, self.output_port,
-                           self.max_sequence_length, lambda: self.is_running)
+        start_beat_offset = self.empty_bars_count * self.beats_per_bar
+        self.playback = PlaybackThread(
+            chord_objects=self.chord_objects,
+            output_port=self.output_port,
+            max_sequence_length=self.max_sequence_length,
+            is_running_func=lambda: self.is_running,
+            conductor=self.conductor,
+            start_beat_offset=start_beat_offset,
+            beats_per_bar=self.beats_per_bar
+        )
         self.playback.start()
         threads.append(self.playback)
         
-        # Wait for threads to finish
         # Wait for threads to finish
         try:
             while True:
@@ -225,23 +289,29 @@ class RealTimePipeline:
     def stop(self):
         self.is_running = False
 
-        # Stop playback first so threads can exit promptly
+        # Stop playback first
         if self.playback: self.playback.stop()
+        
+        # Stop conductor
+        if self.conductor: self.conductor.stop()
 
         # Stop listeners / synth
         if self.midi_listener: self.midi_listener.stop()
         if self.synth_listener: self.synth_listener.stop()
         if self.synth: self.synth.cleanup()
 
-        # Join helper threads if still alive (best-effort, short wait)
+        # Join threads
         if self.playback and self.playback.is_alive():
-            self.playback.join(timeout=1.0)
+            try: self.playback.join(timeout=1.0)
+            except: pass
         if self.metronome_thread and self.metronome_thread.is_alive():
-            self.metronome_thread.join(timeout=1.0)
+            try: self.metronome_thread.join(timeout=1.0)
+            except: pass
         if self.timing_thread and self.timing_thread.is_alive():
-            self.timing_thread.join(timeout=1.0)
+            try: self.timing_thread.join(timeout=1.0)
+            except: pass
 
-        # Shutdown predictor executor to avoid stray threads
+        # Shutdown predictor
         try:
             self.predictor.close()
         except Exception as e:

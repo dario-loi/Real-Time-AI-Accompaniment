@@ -49,18 +49,55 @@ DEFAULT_BPM = 120
 DEFAULT_BEATS_PER_BAR = 4.0
 DEFAULT_MAX_SEQUENCE_LENGTH = 10
 
-DELAY_START_SECONDS = 2.0
-EMPTY_BARS_COUNT = 1  # Default empty bars for metronome
-CHORDS_TO_PRECOMPUTE = 10 # Number of chords to precompute for the LSTM
+DELAY_START_SECONDS = 2.0   # Number of seconds to wait before starting the pipeline
+EMPTY_BARS_COUNT = 1        # Number of empty bars to play before starting the pipeline
+CHORDS_TO_PRECOMPUTE = 10   # Number of chords to precompute each time LSTM is called
+
+# Synth (FluidSynth)
+DEFAULT_SOUNDFONT = "data/GeneralUser-GS.sf2"
+DEFAULT_PROGRAM = 0           # Acoustic Grand Piano
+DEFAULT_CHANNEL = 0           # MIDI channel (0-15)
+DEFAULT_GAIN = 1.0            # Volume level
+
+AUDIO_DRIVERS = {
+    'win32': 'dsound',        # Windows
+    'darwin': 'coreaudio',    # macOS
+    'linux': 'alsa'           # Linux
+}
+
+# Metronome
+METRONOME_SOUNDFONT = DEFAULT_SOUNDFONT
+METRONOME_PROGRAM = 115       # Woodblock instrument
+METRONOME_CHANNEL = 9         # Percussion channel
+METRONOME_GAIN = 0.8          # Synth master volume (0.0-1.0)
+METRONOME_NOTE = 76           # MIDI note (E5)
+METRONOME_VELOCITY = 100      # Note intensity (0-127), +20 for accent
+METRONOME_DURATION = 0.05     # Click duration in seconds
+
+# ------------------------------------------------------------------
+# DYNAMIC BPM DETECTION
+# ------------------------------------------------------------------
+BPM_MIN = 40                        # Minimum BPM allowed
+BPM_MAX = 200                       # Maximum BPM allowed
+IOI_MIN = 60.0 / BPM_MAX            # Minimum IOI
+IOI_MAX = 60.0 / BPM_MIN            # Maximum IOI
+
+# IOI 
+MINIMUM_IOI_NUMBER = 3              # Minimum number of IOIs to calculate BPM
+IOI_WINDOW_SIZE = 6                 # Number of IOIs to consider for BPM calculation
+TEMPO_JUMP_THRESHOLD = 0.5          # >TEMPO_JUMP_THRESHOLD% change triggers jump
+CONSECUTIVE_JUMP_THRESHOLD = 5      # Need CONSECUTIVE_JUMP_THRESHOLD+ consecutive jump IOIs to confirm a jump
+DELTA_RETAIN_BPM = 0.1              # Only update if mean differs > DELTA_RETAIN_BPM% from current
 
 # ------------------------------------------------------------------
 # PREDICTION & SAMPLING
 # ------------------------------------------------------------------
-EXPONENTIAL_WEIGHT_FACTOR = 0.3 # Exponential weight factor for note weighting in ear module. higher = more emphasis on recent notes
-AI_WEIGHT = 0.2                # Weight for LSTM in final prediction (1.0 = AI only, 0.0 = Ear only)
-USE_DETERMINISTIC_SAMPLING = False
-SAMPLING_TOP_K = 85             # Top-K sampling for LSTM
-SAMPLING_TEMPERATURE = 0.13     # Temperature for LSTM sampling (higher = more random)
+EXPONENTIAL_WEIGHT_FACTOR = 0.3     # Exponential weight factor for note weighting in ear module. higher = more emphasis on recent notes
+AI_WEIGHT = 0.2                     # Weight for LSTM in final prediction (1.0 = AI only, 0.0 = Ear only)
+USE_DETERMINISTIC_SAMPLING = False  # Whether to use deterministic sampling in LSTM
+SAMPLING_TOP_K = 85                 # Top-K sampling for LSTM (optuna hyperparam search)
+SAMPLING_TEMPERATURE = 0.13         # Temperature for LSTM sampling (higher = more random)(optuna hyperparam search)
+HARMONY_WINDOW_SIZE = 20            # Number of notes to consider in midi listener
 
 # ------------------------------------------------------------------
 # MUSIC THEORY MAPPINGS

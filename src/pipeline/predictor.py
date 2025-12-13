@@ -59,6 +59,35 @@ class Predictor:
         self.ai.set_key(key)
         self.ear.set_key(key)
 
+    def set_bpm(self, bpm: float):
+        self.bpm = bpm
+    
+    # Submit async LSTM recompute with given initial_sequence
+    def _async_recompute(self, initial_sequence: list):
+        def _recompute():
+            with self.lock:
+                self.precomputed_sequence = self.ai.precompute_sequence(initial_sequence, CHORDS_TO_PRECOMPUTE)
+        self.executor.submit(_recompute)
+    
+    # Handle key change: reset state, recompute LSTM, return tonic of the new key
+    def _handle_key_change(self, new_key: str, confidence: float) -> Chord:
+        print()
+        logger.info(f"[KEY DETECTOR] !!! Changed Key: {self.key} -> {new_key} ({confidence:.2f})")
+        self.set_key(new_key)
+        
+        # Reset state
+        with self.lock:
+            self.chord_window.clear()
+            self.precomputed_sequence = []
+            self.precomputed_idx = 0
+        
+        # Async recompute from tonic in the new key
+        self._async_recompute(['I'])
+        
+        print()
+        logger.info(f"[KEY CHANGE] Returning tonic: {new_key} major")
+        return Chord(new_key, 'major', self.bpm, self.beats_per_bar)
+
     # Updates chord history given a confirmed chord for next prediction
     # Non-blocking to avoid stalling the timing thread   
     def update_history(self, roman_chord: str):
@@ -123,7 +152,7 @@ class Predictor:
 
         # Wait if future is running (Sync point)
         if self.future and not self.future.done():
-            # logger.debug("[LSTM] Waiting for async prediction...")
+            logger.debug("[LSTM] Waiting for async prediction...")
             self.future.result() # Blocks until done
             
         with self.lock:
@@ -171,10 +200,7 @@ class Predictor:
         if detected_key_info:
             detected_root, confidence = detected_key_info
             if detected_root != self.key:
-                print()
-                logger.info(f"[KEY DETECTOR] !!! Changed Key: {self.key} -> {detected_root} ({confidence:.2f})")
-                self.set_key(detected_root)
-                print()
+                return self._handle_key_change(detected_root, confidence)
                 
         # 4. Refine Prediction
         # 4.1. Get AI Distribution for next chord (precomputed)

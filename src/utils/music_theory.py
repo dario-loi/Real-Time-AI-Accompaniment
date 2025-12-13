@@ -231,6 +231,11 @@ def get_starting_chord(default_key: str):
     # Parse input
     root, quality = parse_compact_chord(user_input)
     
+    # Validate root is a valid note
+    if normalize_note(root) not in NOTES:
+        logger.warning(f"[WARNING] Invalid chord '{user_input}'. Using default {default_key}.")
+        return default_key, default_key, 'major'
+    
     # Key selection logic
     # 1. Minor Context -> Relative Major (Root + 3 semitones)
     if quality in MINOR_QUALITIES and quality not in DIMINISHED_QUALITIES:

@@ -5,7 +5,7 @@
 
 import mido
 from typing import Optional
-from src.config import NOTES
+from src.config import NOTES, DEFAULT_SOUNDFONT, DEFAULT_PROGRAM, DEFAULT_CHANNEL, DEFAULT_GAIN, AUDIO_DRIVERS
 from src.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -17,19 +17,6 @@ except (ImportError, FileNotFoundError) as e:
     logger.error(f"FluidSynth not available: {e}")
     FLUIDSYNTH_AVAILABLE = False
     fluidsynth = None
-
-# Static data
-DEFAULT_SOUNDFONT = "data/GeneralUser-GS.sf2"           # Sounds used for synthesis
-DEFAULT_PROGRAM = 0                                     # 0 = Acoustic Grand Piano
-DEFAULT_CHANNEL = 0                                     # MIDI channel to use (0-15)
-DEFAULT_GAIN = 1.0                                      # Volume level
-
-# Audio driver selection based on OS (single preferred driver per platform)
-AUDIO_DRIVERS = {
-    'win32': 'dsound',      # Windows (wasapi can be noisy with warnings)
-    'darwin': 'coreaudio',  # macOS
-    'linux': 'alsa'         # Linux
-}
 
 
 # ================================= Helper Functions =======================================

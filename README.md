@@ -15,6 +15,11 @@ This project implements a sophisticated **Hybrid AI/Musical-Theory System** capa
 > ## 🚧 Work in Progress!
 >
 > Currently working on it, so feel free to **star** ⭐️ the repo to stay updated!
+>
+> The system is **fully functional** and produces good quality accompaniment. Future refinements will include:
+> - 🎯 Improve BPM detection accuracy
+> - 🎼 Enhance accompaniment robustness and creativity
+> - 📦 Make installation and setup easier
 
 ## 🧠 The Hybrid Engine
 
@@ -35,14 +40,30 @@ A deterministic, low-latency module listens to your live notes in the millisecon
 
 ## ⚡ Real-Time Engineering
 
-The system runs on a **4-Thread Architecture** designed to minimize latency:
+The system runs on a **Multi-Thread Architecture** synchronized by a centralized **Conductor** clock:
 
-| Thread | Function | Description |
-|--------|----------|-------------|
-| **Timing** | `Critical` | The system's "Heartbeat". High-priority scheduler that manages the timeline, queries the Predictor, and schedules events. |
+| Thread | Role | Description |
+|--------|------|-------------|
+| **Timing** | `Critical` | The system's "Heartbeat". High-priority scheduler that manages the timeline, queries the Predictor, and schedules chord events. |
 | **Playback** | `Output` | Dedicated thread for FluidSynth audio generation. Decoupled from logic to prevent blocking. |
-| **Listener** | `Input` | Asynchronous MIDI capture. Continuously buffers incoming notes for the "Ear" to analyze. |
-| **Metronome** | `Sync` | Independent click track to keep human and machine locked in the same groove (E3 E3 D4 E4). |
+| **Listener** | `Input` | Asynchronous MIDI capture. Buffers notes for the "Ear" and feeds onsets to BPM Detector. |
+| **Metronome** | `Sync` | Independent click track synced to Conductor to keep human and machine locked in the same groove (E3 E3 D4 E4). |
+| **Predictor** | `Async` | Background ThreadPoolExecutor for LSTM precomputation. Non-blocking inference. |
+
+> **Conductor**: All threads query the `Conductor` for current tempo and beat timing, ensuring perfect synchronization even during dynamic BPM changes.
+
+---
+
+## 🎚️ Dynamic BPM Detection
+
+The system features **real-time tempo tracking** that adapts to your playing:
+
+| Feature | Description |
+|---------|-------------|
+| **IOI-Based Detection** | Analyzes Inter-Onset Intervals from your MIDI input |
+| **Hysteresis Filter** | 10% threshold prevents jittery tempo updates |
+| **Static/Dynamic Mode** | Choose fixed BPM or live tracking at startup |
+| **Conductor Sync** | All threads receive tempo updates instantly |
 
 ---
 
@@ -54,6 +75,7 @@ Modular architecture included in the `src` package:
 src/
 ├── __init__.py
 ├── audio/                      # Audio & MIDI I/O
+│   ├── clock.py                # Conductor - centralized timing authority
 │   ├── metronome.py            # Plays metronome clicks with bar accents
 │   ├── midi_io.py              # MIDI playback and I/O utilities
 │   ├── midi_listener.py        # Asynchronous MIDI input listener (The "Ear" input)
@@ -69,6 +91,7 @@ src/
 │   └── vocabulary.py           # Tokenizer (Chord <-> Index mapping)
 ├── music/                      # Music Theory Logic
 │   ├── __init__.py
+│   ├── bpm_detector.py         # Real-time tempo estimation via IOI analysis
 │   ├── chord.py                # Chord object representation and MIDI generation
 │   ├── ear.py                  # Real-time harmonic analysis (Control System)
 │   └── key_detector_major.py   # Krumhansl-Schmuckler Key Detection

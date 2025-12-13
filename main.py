@@ -8,10 +8,11 @@ from src.utils.logger import setup_logger
 from src.utils.music_theory import get_starting_chord
 
 # Config
-BPM = 100
+BPM = 120
+STATIC_BPM = 120  # Used when dynamic BPM is disabled
 DEFAULT_KEY = 'C'
 BEATS_PER_BAR = 4.0
-SEQUENCE_LENGTH = 10
+SEQUENCE_LENGTH = 20
 
 
 logger = setup_logger()
@@ -25,14 +26,20 @@ if __name__ == "__main__":
     # Interactive Setup
     system_key, start_root, start_quality = get_starting_chord(DEFAULT_KEY)
     
-    logger.info(f"Starting System: Key={system_key} | StartChord={start_root}{start_quality}")
+    # BPM Mode Selection
+    bpm_mode_input = input("Use dynamic BPM detection? [Y/n]: ").strip().lower()
+    use_dynamic_bpm = bpm_mode_input != 'n'
+    current_bpm = BPM if use_dynamic_bpm else STATIC_BPM
+    
+    bpm_mode_str = "Dynamic" if use_dynamic_bpm else f"Static ({STATIC_BPM})"
+    logger.info(f"Starting System: Key={system_key} | StartChord={start_root}{start_quality} | BPM: {bpm_mode_str}")
     
     try:
         pipeline = RealTimePipeline(
             key=system_key,                             # Musical key (for AI context)
             starting_root=start_root,                   # Actual starting chord root
             starting_quality=start_quality,             # Actual starting chord quality
-            bpm=BPM,                                    # Tempo in BPM
+            bpm=current_bpm,                            # Tempo in BPM
             beats_per_bar=BEATS_PER_BAR,                # How many beats in one bar
             window_size=WINDOW_SIZE,                    # How many chords to consider for prediction
             max_sequence_length=SEQUENCE_LENGTH,        # Maximum generated sequence length in chords
@@ -40,7 +47,8 @@ if __name__ == "__main__":
             input_port=INPUT_PORT,                      # Input port for MIDI input (play)
             enable_input_listener=True,                 # Enable MIDI input listener
             enable_metronome=True,                      # Enable metronome
-            enable_synth=True                           # Enable MIDI synth
+            enable_synth=True,                          # Enable MIDI synth
+            enable_dynamic_bpm=use_dynamic_bpm          # Enable dynamic BPM detection
         )
         
         # Start pipeline
