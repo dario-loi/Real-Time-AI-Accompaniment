@@ -20,7 +20,7 @@ class ChordDataset(Dataset):
         self.vocabulary = vocabulary
         self.window_size = window_size
 
-        self.samples = []  # list of (song_indices, start, target)
+        self.samples = []  # list of (padded_song, start)
         pad_idx = self.vocabulary.chord_to_idx[self.vocabulary.pad_token]
 
         for song in tqdm(songs, desc="Preparing index"):
@@ -30,27 +30,27 @@ class ChordDataset(Dataset):
             song_indices = list(self.vocabulary.to_indices(song))
             padded_song = [pad_idx] * (self.window_size - 1) + song_indices
 
-            num_targets = len(song_indices) - 1
-            max_start = len(padded_song) - self.window_size  # last valid start
+            # windows that allow both input and shifted target to be full length
+            max_start = len(padded_song) - self.window_size - 1
+            if max_start < 0:
+                continue
 
-            for i in range(num_targets):
-                if i > max_start:
-                    break  # can't have a complete window
-                target = song_indices[i + 1]
-                self.samples.append((padded_song, i, target))
+            for i in range(max_start + 1):
+                self.samples.append((padded_song, i))
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        padded_song, start, target = self.samples[idx]
-        window = padded_song[start : start + self.window_size]
+        padded_song, start = self.samples[idx]
+        x_window = padded_song[start : start + self.window_size]
+        y_window = padded_song[start + 1 : start + 1 + self.window_size]
 
-        # security: assert that the window has always seq_len
-        assert len(window) == self.window_size, f"Got window len {len(window)}"
+        assert len(x_window) == self.window_size, f"Got window len {len(x_window)}"
+        assert len(y_window) == self.window_size, f"Got target window len {len(y_window)}"
 
-        x = torch.tensor(window, dtype=torch.long)
-        y = torch.tensor(target, dtype=torch.long)
+        x = torch.tensor(x_window, dtype=torch.long)
+        y = torch.tensor(y_window, dtype=torch.long)
         return x, y
 
 

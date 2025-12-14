@@ -1,53 +1,158 @@
 import sys
 import os
+import pickle
 
 # Add project root to Python path (critical for imports when running from nested directories)
-# __file__ gives us the path to THIS file, then we go up 3 directories to reach project root
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+project_root = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import torch
 import torch.nn as nn
-import pickle
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-from torch.amp import autocast, GradScaler
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.loggers import TensorBoardLogger
 
+torch.set_float32_matmul_precision("high")
 
 from src.utils.logger import setup_logger
 from src.model.lstm_model import ChordLSTM
 from src.model.vocabulary import Vocabulary
 from src.model.train.dataloader import create_loaders
 from src.config import (
-    CLEAN_DATA_PKL, MODEL_PATH, VOCAB_PATH, TEST_SET_PATH, PLOT_PATH,
-    WINDOW_SIZE, HIDDEN_SIZE, EMBEDDING_DIM, NUM_LAYERS,
-    BATCH_SIZE, EPOCHS, LEARNING_RATE, DROPOUT, NUM_WORKERS
+    CLEAN_DATA_PKL,
+    MODEL_PATH,
+    VOCAB_PATH,
+    WINDOW_SIZE,
+    HIDDEN_SIZE,
+    EMBEDDING_DIM,
+    NUM_LAYERS,
+    BATCH_SIZE,
+    EPOCHS,
+    LEARNING_RATE,
+    DROPOUT,
+    NUM_WORKERS,
 )
 
-# Alias to match config.py variables
-DATA_PATH = CLEAN_DATA_PKL
 
 logger = setup_logger()
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-if torch.backends.mps.is_available():
-    device = torch.device('mps')
-    
-scaler = GradScaler(enabled=(device.type == "cuda"))
+
+class ChordLitModule(pl.LightningModule):
+    def __init__(
+        self,
+        vocab_size: int,
+        embedding_dim: int,
+        hidden_size: int,
+        num_layers: int,
+        dropout: float,
+        learning_rate: float,
+        total_steps: int,
+        pad_idx: int,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        self.model = ChordLSTM(
+            vocab_size,
+            embedding_dim,
+            hidden_size,
+            num_layers,
+            dropout,
+            padding_idx=pad_idx,
+        )
+        self.pad_idx = pad_idx
+        self.criterion = nn.CrossEntropyLoss(label_smoothing=0.1, ignore_index=pad_idx)
+
+    def forward(self, x):
+        return self.model(x)
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch  # x: (B, T), y: (B, T)
+        logits = self(x)  # (B, T, V)
+        loss = self._compute_loss(logits, y)
+        acc = self._compute_accuracy(logits, y)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=x.size(0))
+        self.log("train_acc", acc, on_step=False, on_epoch=True, prog_bar=True, batch_size=x.size(0))
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        logits = self(x)
+        loss = self._compute_loss(logits, y)
+        acc = self._compute_accuracy(logits, y)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=x.size(0))
+        self.log("val_acc", acc, on_step=False, on_epoch=True, prog_bar=True, batch_size=x.size(0))
+
+    def configure_optimizers(self):
+        decay, no_decay = [], []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if name.endswith("bias") or "norm" in name or "embedding" in name:
+                no_decay.append(param)
+            else:
+                decay.append(param)
+
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": decay, "weight_decay": 1e-4},
+                {"params": no_decay, "weight_decay": 0.0},
+            ],
+            lr=self.hparams.learning_rate,
+            amsgrad=True,
+        )
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=self.hparams.learning_rate,
+            total_steps=max(int(self.hparams.total_steps), 1),
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",
+                "name": "lr",
+            },
+        }
+
+    def _compute_loss(self, logits, targets):
+        # logits: (B, T, V), targets: (B, T)
+        vocab_size = logits.size(-1)
+        loss = self.criterion(logits.view(-1, vocab_size), targets.view(-1))
+        return loss
+
+    def _compute_accuracy(self, logits, targets):
+        preds = torch.argmax(logits, dim=-1)
+        mask = targets.ne(self.pad_idx)
+        if mask.sum() == 0:
+            return torch.tensor(0.0, device=logits.device)
+        correct = (preds == targets) & mask
+        return correct.float().sum() / mask.sum().float()
+
+
+def _select_accelerator_and_precision():
+    if torch.cuda.is_available():
+        return "gpu", "bf16-mixed"
+    if torch.backends.mps.is_available():
+        return "mps", "32-true"
+    return "cpu", "32-true"
 
 
 def train():
-
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+    
     logger.info("Loading data...")
-    if not os.path.exists(DATA_PATH):
-        logger.error(f"Data file not found at {DATA_PATH}")
+    if not os.path.exists(CLEAN_DATA_PKL):
+        logger.error(f"Data file not found at {CLEAN_DATA_PKL}")
         return
 
-    with open(DATA_PATH, 'rb') as f:
+    with open(CLEAN_DATA_PKL, "rb") as f:
         songs = pickle.load(f)
-        
-    # Load vocabulary
+
     logger.info("Loading vocabulary...")
     if not os.path.exists(VOCAB_PATH):
         logger.error(f"Vocabulary not found at {VOCAB_PATH}. Run src/model/vocabulary.py first to build it.")
@@ -56,183 +161,70 @@ def train():
     vocab = Vocabulary()
     vocab.load_vocab(VOCAB_PATH)
     logger.info(f"Vocabulary size: {len(vocab)}")
-    
-    # Create loaders for train 80% and test 20%
-    logger.info("Creating dataloaders...")
-    train_loader, test_loader = create_loaders(songs, vocab, BATCH_SIZE, WINDOW_SIZE, num_workers=NUM_WORKERS, pin_memory=True)
-    
-    # Save test set for evaluation later
-    # logger.info(f"Saving test set to {TEST_SET_PATH}...")
-    # all_X_test = []
-    # all_y_test = []
-    # for X, y in test_loader:
-    #     all_X_test.append(X)
-    #     all_y_test.append(y)
-    
-    # if all_X_test:
-    #     X_test_tensor = torch.cat(all_X_test)
-    #     y_test_tensor = torch.cat(all_y_test)
-    #     with open(TEST_SET_PATH, 'wb') as f:
-    #         pickle.dump({'X_test': X_test_tensor, 'y_test': y_test_tensor}, f)
-    
-    # Model setup
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    if torch.backends.mps.is_available():
-        device = torch.device('mps')
-        
-    logger.info(f"Training on {device}")
-    
-    model = ChordLSTM(len(vocab), EMBEDDING_DIM, HIDDEN_SIZE, NUM_LAYERS, DROPOUT).to(device)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-    optimizer,
-    max_lr=LEARNING_RATE,        # o leggermente più alto es. 2*LEARNING_RATE
-    total_steps=EPOCHS * len(train_loader)
-)
 
-     
-    best_val_acc = 0.0
-    
-    history = {
-        'train_loss': [],
-        'val_loss': [],
-        'train_acc': [],
-        'val_acc': [],
-        'train_loss_steps': []
-    }
-    
-    global_step = 0
-    running_loss = 0.0
-    
-    # Training loop
-    for epoch in range(EPOCHS):
-        model.train()
-        total_loss = 0
-        correct = 0
-        total = 0
-        
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS} [Train]")
-        
-        for batch_X, batch_y in pbar:
-            global_step += 1
-            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            
-            optimizer.zero_grad(set_to_none=True)
-            with autocast(device_type=device.type, enabled=(device.type == "cuda")):
-                outputs = model(batch_X)
-                loss = criterion(outputs, batch_y)
-                
-            # Backward pass with gradient scaling   
-            scaler.scale(loss).backward()
-            
-            # Gradient clipping
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            
-            # Step optimizer and scheduler
-            scaler.step(optimizer)
-            scaler.update()
-            scheduler.step()
-            
-            total_loss += loss.item()
-            running_loss += loss.item()
-            
-            # Save loss every 1000 steps
-            if global_step % 1000 == 0:
-                avg_running_loss = running_loss / 1000
-                history['train_loss_steps'].append((global_step, avg_running_loss))
-                running_loss = 0.0
-            
-            _, predicted = torch.max(outputs.data, dim=1)
-            total += batch_y.size(0)
-            correct += (predicted == batch_y).sum().item()
-            
-            current_loss = total_loss / (pbar.n + 1)
-            current_acc = 100 * correct / total
-            pbar.set_postfix({'loss': f'{current_loss:.4f}', 'acc': f'{current_acc:.2f}%'})
-            
-        avg_loss = total_loss / len(train_loader)
-        train_acc = 100 * correct / total
-        
-        # Validation
-        model.eval()
-        val_correct = 0
-        val_total = 0
-        val_loss = 0
-        
-        with torch.no_grad():
-            for batch_X, batch_y in tqdm(test_loader, desc=f"Epoch {epoch+1}/{EPOCHS} [Val]"):
-                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                outputs = model(batch_X)
-                loss = criterion(outputs, batch_y)
-                val_loss += loss.item()
-                _, predicted = torch.max(outputs.data, 1)
-                val_total += batch_y.size(0)
-                val_correct += (predicted == batch_y).sum().item()
-        
-        val_acc = 100 * val_correct / val_total
-        avg_val_loss = val_loss / len(test_loader)
-        
-        history['train_loss'].append(avg_loss)
-        history['val_loss'].append(avg_val_loss)
-        history['train_acc'].append(train_acc)
-        history['val_acc'].append(val_acc)
-        
-        logger.info(f"Epoch [{epoch+1}/{EPOCHS}] | Loss: {avg_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Train Acc: {train_acc:.2f}% | Val Acc: {val_acc:.2f}%")
-        
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            torch.save(model.state_dict(), MODEL_PATH)
-            logger.info(f"(*) Best Model Saved with Acc: {best_val_acc:.2f}%")
-    
-        logger.info(f"Saving training plots to {PLOT_PATH}...")
-        plot_training_history(history, PLOT_PATH)
-        
-        history_path = PLOT_PATH.replace('.png', '_history.pkl')
-        with open(history_path, 'wb') as f:
-            pickle.dump(history, f)
-        logger.info(f"Training history saved to {history_path}")        
-            
-            
-    logger.info("Training complete.")
-    logger.info(f"Best Test Accuracy: {best_val_acc:.2f}%")
-    
-    
-    
-def plot_training_history(history, save_path):
-    """
-    Plots and saves training/validation loss and accuracy
-    
-    Args:
-        history: Dict with keys 'train_loss', 'val_loss', 'train_acc', 'val_acc'
-        save_path: Path where to save the plot
-    """
-    epochs = range(1, len(history['train_loss']) + 1)
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
-    
-    # Plot Loss
-    ax1.plot(epochs, history['train_loss'], 'b-', label='Train Loss', linewidth=2)
-    ax1.plot(epochs, history['val_loss'], 'r-', label='Val Loss', linewidth=2)
-    ax1.set_xlabel('Epoch', fontsize=12)
-    ax1.set_ylabel('Loss', fontsize=12)
-    ax1.set_title('Training and Validation Loss', fontsize=14, fontweight='bold')
-    ax1.legend(fontsize=11)
-    ax1.grid(True, alpha=0.3)
-    
-    # Plot Accuracy
-    ax2.plot(epochs, history['train_acc'], 'b-', label='Train Acc', linewidth=2)
-    ax2.plot(epochs, history['val_acc'], 'r-', label='Val Acc', linewidth=2)
-    ax2.set_xlabel('Epoch', fontsize=12)
-    ax2.set_ylabel('Accuracy (%)', fontsize=12)
-    ax2.set_title('Training and Validation Accuracy', fontsize=14, fontweight='bold')
-    ax2.legend(fontsize=11)
-    ax2.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close()    
+    logger.info("Creating dataloaders...")
+    train_loader, val_loader = create_loaders(
+        songs,
+        vocab,
+        batch_size=BATCH_SIZE,
+        window_size=WINDOW_SIZE,
+        num_workers=NUM_WORKERS,
+        pin_memory=True,
+    )
+
+    steps_per_epoch = len(train_loader)
+    total_steps = EPOCHS * steps_per_epoch
+
+    pad_idx = vocab.chord_to_idx.get(vocab.pad_token, 0)
+
+    model = ChordLitModule(
+        vocab_size=len(vocab),
+        embedding_dim=EMBEDDING_DIM,
+        hidden_size=HIDDEN_SIZE,
+        num_layers=NUM_LAYERS,
+        dropout=DROPOUT,
+        learning_rate=LEARNING_RATE,
+        total_steps=total_steps,
+        pad_idx=pad_idx,
+    )
+
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val_acc",
+        mode="max",
+        save_top_k=1,
+        filename="best",
+    )
+    lr_monitor = LearningRateMonitor(logging_interval="step")
+
+    log_dir = os.path.join(project_root, "logs")
+    tb_logger = TensorBoardLogger(save_dir=log_dir, name="chord_lstm")
+
+    accelerator, precision = _select_accelerator_and_precision()
+
+    trainer = pl.Trainer(
+        max_epochs=EPOCHS,
+        accelerator=accelerator,
+        devices=1,
+        logger=tb_logger,
+        callbacks=[checkpoint_callback, lr_monitor],
+        gradient_clip_val=1.0,
+        precision=precision,
+        log_every_n_steps=50,
+    )
+
+    logger.info(f"Training on accelerator={accelerator} with precision={precision}")
+    trainer.fit(model, train_loader, val_loader)
+
+    best_ckpt_path = checkpoint_callback.best_model_path
+    if best_ckpt_path:
+        logger.info(f"Best checkpoint: {best_ckpt_path}")
+        best_model = ChordLitModule.load_from_checkpoint(best_ckpt_path)
+        torch.save(best_model.model.state_dict(), MODEL_PATH)
+        logger.info(f"Best model weights saved to {MODEL_PATH}")
+        if checkpoint_callback.best_model_score is not None:
+            logger.info(f"Best Val Acc: {checkpoint_callback.best_model_score.item() * 100:.2f}%")
+    else:
+        logger.warning("No checkpoint was saved during training.")
 
 
 if __name__ == "__main__":

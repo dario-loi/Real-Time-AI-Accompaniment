@@ -7,3 +7,6 @@ tqdm
 optuna
 matplotlib
 pandas
+pytorch-lightning
+torchmetrics
+tensorboard

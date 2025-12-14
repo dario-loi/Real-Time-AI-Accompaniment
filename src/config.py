@@ -40,21 +40,25 @@ PLOT_PATH = os.path.join(PROJECT_ROOT, 'data', 'training_plot.png')
 # ------------------------------------------------------------------
 # MODEL HYPERPARAMETERS
 # ------------------------------------------------------------------
-WINDOW_SIZE = 8        # Number of chords to consider for prediction
-HIDDEN_SIZE = 512
+WINDOW_SIZE = 16        # Number of chords to consider for prediction
+HIDDEN_SIZE = 256
 EMBEDDING_DIM = 256
-NUM_LAYERS = 3
+NUM_LAYERS = 4
 DROPOUT = 0.3
 PAD_IDX = 0            # Vocabulary index for padding
 UNKNOWN_IDX = 1        # Vocabulary index for unknown chords
 
+# Model architecture selection
+MODEL_ARCH_TRAIN = 'lstm'
+MODEL_ARCH_INFER = 'lstm'
+
 # ------------------------------------------------------------------
 # TRAINING CONFIGURATION
 # ------------------------------------------------------------------
-BATCH_SIZE = 1024
-EPOCHS = 8
-LEARNING_RATE = 0.0002
-NUM_WORKERS = 2
+BATCH_SIZE = int(2 ** 12)
+EPOCHS = 1
+LEARNING_RATE = 0.002
+NUM_WORKERS = 8 
 
 # ------------------------------------------------------------------
 # TIMING & PIPELINE

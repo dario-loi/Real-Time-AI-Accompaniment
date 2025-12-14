@@ -16,9 +16,18 @@ from typing import List, Tuple, Dict
 from src.utils.music_theory import roman_to_chord, compact_chord
 from src.model.lstm_model import ChordLSTM
 from src.config import (
-    MODEL_PATH, VOCAB_PATH, 
-    HIDDEN_SIZE, EMBEDDING_DIM, NUM_LAYERS, WINDOW_SIZE, DROPOUT, 
-    PAD_IDX, UNKNOWN_IDX, SAMPLING_TOP_K, SAMPLING_TEMPERATURE, USE_DETERMINISTIC_SAMPLING
+    MODEL_PATH,
+    VOCAB_PATH,
+    HIDDEN_SIZE,
+    EMBEDDING_DIM,
+    NUM_LAYERS,
+    WINDOW_SIZE,
+    DROPOUT,
+    PAD_IDX,
+    UNKNOWN_IDX,
+    SAMPLING_TOP_K,
+    SAMPLING_TEMPERATURE,
+    USE_DETERMINISTIC_SAMPLING,
 )
 from src.utils.logger import setup_logger
 
@@ -41,18 +50,25 @@ class AIHarmonyRules:
         self.vocab_size = len(self.chord_to_idx)
         
         # Load model
-        if not os.path.exists(MODEL_PATH):
-            raise FileNotFoundError(f"Model not found at {MODEL_PATH}. Run training first.")
-            
-        self.model = ChordLSTM(self.vocab_size, EMBEDDING_DIM, HIDDEN_SIZE, NUM_LAYERS, DROPOUT, padding_idx=PAD_IDX)
-        
+        model_path = MODEL_PATH
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model not found at {model_path}. Run training first.")
+
+        self.model = ChordLSTM(
+            self.vocab_size,
+            EMBEDDING_DIM,
+            HIDDEN_SIZE,
+            NUM_LAYERS,
+            DROPOUT,
+            padding_idx=PAD_IDX,
+        )
+
         try:
-            self.model.load_state_dict(torch.load(MODEL_PATH, map_location=self.device))
+            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
         except RuntimeError as e:
-            logger.error(f"\n[LSTM LOADING ERROR] Model shape mismatch! You changed hyperparameters but didn't re-train the model.")
-            logger.error(f"Expected: Hidden={HIDDEN_SIZE}, Layers={NUM_LAYERS}, Embed={EMBEDDING_DIM}")
+            logger.error(f"\n[MODEL LOADING ERROR] Shape mismatch; confirm hyperparameters and retrain.")
             raise e
-            
+
         self.model.to(self.device)
         self.model.eval()
         
@@ -74,8 +90,15 @@ class AIHarmonyRules:
     # Predict next chord distribution using LSTM-based model
     # Can use both deterministic (argmax) and probabilistic sampling
     # Returns either roman numeral or (root, type) tuple based on return_roman flag 
-    def get_next_chord_distribution(self, chord_history: List[str], return_roman: bool = False, deterministic_sampling: bool = USE_DETERMINISTIC_SAMPLING, 
-                                    temperature: float = SAMPLING_TEMPERATURE, top_k: int = SAMPLING_TOP_K) -> Tuple[str, Dict[str, float]]:
+    def get_next_chord_distribution(
+        self,
+        chord_history: List[str],
+        return_roman: bool = False,
+        deterministic_sampling: bool = USE_DETERMINISTIC_SAMPLING,
+        temperature: float = SAMPLING_TEMPERATURE,
+        top_k: int = SAMPLING_TOP_K,
+        top_p: float = 0.95,
+    ) -> Tuple[str, Dict[str, float]]:
 
         if not chord_history:
             # Fallback for empty history
@@ -100,11 +123,11 @@ class AIHarmonyRules:
         
         # Inference
         with torch.no_grad():
-            output = self.model(input_tensor)
-            # Apply temperature
+            output = self.model(input_tensor)            # shape (1, T, V)
+            logits = output[:, -1, :]                    # last timestep
             if not deterministic_sampling and temperature != 1.0:
-                 output = output / temperature
-            probs = torch.softmax(output, dim=1)
+                logits = logits / temperature
+            probs = torch.softmax(logits, dim=-1)
             
         # Sample from distribution
         probs_np = probs.cpu().numpy()[0]
@@ -125,19 +148,25 @@ class AIHarmonyRules:
             probs_np[PAD_IDX] = 0
             
             # --- TOP-K SAMPLING ---
-            if top_k > 0:
-                # Get indices of top k elements
-                # Use argpartition for efficiency (O(n)) vs sort (O(n log n))
-                if top_k < len(probs_np):
-                     # We want the indices of the largest top_k elements
-                    ind = np.argpartition(probs_np, -top_k)[-top_k:]
-                    
-                    # Create a mask for zeroing out everything else
-                    mask = np.zeros_like(probs_np, dtype=bool)
-                    mask[ind] = True
-                    
-                    # Apply mask (force zero probability for non-top-k)
-                    probs_np[~mask] = 0.0
+            if top_k > 0 and top_k < len(probs_np):
+                ind = np.argpartition(probs_np, -top_k)[-top_k:]
+                mask = np.zeros_like(probs_np, dtype=bool)
+                mask[ind] = True
+                probs_np[~mask] = 0.0
+
+            # --- TOP-P (NUCLEUS) SAMPLING ---
+            if 0.0 < top_p < 1.0:
+                sorted_idx = np.argsort(probs_np)[::-1]
+                sorted_probs = probs_np[sorted_idx]
+                cumsum = np.cumsum(sorted_probs)
+                cutoff_mask = cumsum <= top_p
+                # ensure at least one token kept
+                if not cutoff_mask.any():
+                    cutoff_mask[0] = True
+                keep_indices = sorted_idx[cutoff_mask]
+                mask = np.zeros_like(probs_np, dtype=bool)
+                mask[keep_indices] = True
+                probs_np[~mask] = 0.0
 
             # Re-normalize probabilities 
             if probs_np.sum() > 0:
@@ -179,10 +208,15 @@ class AIHarmonyRules:
 
     # precomputes a sequence of chords based on argmax prediction
     # returns list of (roman_numeral, probability_dict) tuples
-    def precompute_sequence(self, start_history: List[str], length: int, 
-                            deterministic_sampling: bool = USE_DETERMINISTIC_SAMPLING,
-                            temperature: float = SAMPLING_TEMPERATURE,
-                            top_k: int = SAMPLING_TOP_K) -> List[Tuple[str, Dict[str, float]]]:
+    def precompute_sequence(
+        self,
+        start_history: List[str],
+        length: int,
+        deterministic_sampling: bool = USE_DETERMINISTIC_SAMPLING,
+        temperature: float = SAMPLING_TEMPERATURE,
+        top_k: int = SAMPLING_TOP_K,
+        top_p: float = 0.95,
+    ) -> List[Tuple[str, Dict[str, float]]]:
 
         sequence = []
         current_history = list(start_history)
@@ -194,7 +228,8 @@ class AIHarmonyRules:
                 return_roman=True, 
                 deterministic_sampling=deterministic_sampling,
                 temperature=temperature,
-                top_k=top_k
+                top_k=top_k,
+                top_p=top_p,
             )
             
             sequence.append((predicted_roman, prob_dict))
