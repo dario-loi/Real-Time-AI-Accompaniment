@@ -78,15 +78,22 @@ class Vocabulary:
 # ----------------------------- Main for building and testing the vocabulary -----------------------------
 
 if __name__ == "__main__":
+    import sys
+    import os
+    
+    # Add project root to Python path
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
 
     from src.utils.logger import setup_logger
     from src.utils.music_theory import parse_compact_chord, chord_to_roman, roman_to_chord, compact_chord
+    from src.config import CLEAN_DATA_PKL, VOCAB_PATH
     
     logger = setup_logger()
     
     # Configuration
-    DATA_PATH = "data/clean_dataset.pkl"
-    VOCAB_PATH = "data/vocab.pkl"
+    DATA_PATH = CLEAN_DATA_PKL
     
     logger.info("Starting Vocabulary Creation and Testing...")
     

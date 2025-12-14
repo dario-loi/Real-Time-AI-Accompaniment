@@ -1,7 +1,15 @@
+import sys
+import os
+
+# Add project root to Python path (critical for imports when running from nested directories)
+# __file__ gives us the path to THIS file, then we go up 3 directories to reach project root
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import torch
 import torch.nn as nn
 import pickle
-import os
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from torch.amp import autocast, GradScaler

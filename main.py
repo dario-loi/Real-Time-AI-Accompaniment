@@ -2,6 +2,14 @@
 # Real-Time Accompaniment Generation Pipeline entry point
 # ==================================================================================================================
 
+import sys
+import os
+
+# Add project root to Python path (critical for imports)
+project_root = os.path.dirname(os.path.abspath(__file__))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from src.pipeline import RealTimePipeline
 from src.config import OUTPUT_PORT, INPUT_PORT, WINDOW_SIZE
 from src.utils.logger import setup_logger

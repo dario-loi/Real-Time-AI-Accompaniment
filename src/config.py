@@ -3,6 +3,19 @@
 # ==================================================================================================
 
 import numpy as np
+import os
+import sys
+
+# ------------------------------------------------------------------
+# PROJECT ROOT SETUP
+# ------------------------------------------------------------------
+# Get the absolute path to the project root (two levels up from src/)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Add project root to sys.path if not already present (for imports)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from src.soundfonts import SOUNDFONT_MAPPING
 
 # ------------------------------------------------------------------
@@ -13,16 +26,16 @@ INPUT_PORT = 'IAC Piano OUT'  # vmpk virtual piano for notes input
 # INPUT_PORT = 'Digital Piano' # yamaha physical keyboard
 
 # ------------------------------------------------------------------
-# PATHS
+# PATHS (Absolute paths to ensure they work from any working directory)
 # ------------------------------------------------------------------
-DATA_DIR = 'data'
-RAW_DATA_PATH = 'data/chordonomicon_v2.csv'
-CLEAN_DATA_PKL = 'data/clean_dataset.pkl'
-CLEAN_DATA_CSV = 'data/clean_dataset.csv'
-MODEL_PATH = "data/best_model.pth"
-VOCAB_PATH = "data/vocab.pkl"
-TEST_SET_PATH = "data/test_set.pkl"
-PLOT_PATH = "data/training_plot.png"
+DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
+RAW_DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'chordonomicon_v2.csv')
+CLEAN_DATA_PKL = os.path.join(PROJECT_ROOT, 'data', 'clean_dataset.pkl')
+CLEAN_DATA_CSV = os.path.join(PROJECT_ROOT, 'data', 'clean_dataset.csv')
+MODEL_PATH = os.path.join(PROJECT_ROOT, 'data', 'best_model.pth')
+VOCAB_PATH = os.path.join(PROJECT_ROOT, 'data', 'vocab.pkl')
+TEST_SET_PATH = os.path.join(PROJECT_ROOT, 'data', 'test_set.pkl')
+PLOT_PATH = os.path.join(PROJECT_ROOT, 'data', 'training_plot.png')
 
 # ------------------------------------------------------------------
 # MODEL HYPERPARAMETERS
@@ -55,7 +68,7 @@ EMPTY_BARS_COUNT = 1        # Number of empty bars to play before starting the p
 CHORDS_TO_PRECOMPUTE = 10   # Number of chords to precompute each time LSTM is called
 
 # Synth (FluidSynth)
-DEFAULT_SOUNDFONT = "data/GeneralUser-GS.sf2"
+DEFAULT_SOUNDFONT = os.path.join(PROJECT_ROOT, 'data', 'GeneralUser-GS.sf2')
 DEFAULT_PROGRAM = 0          # Sound for chords
 DEFAULT_CHANNEL = 0                                          # MIDI channel (0-15)
 DEFAULT_GAIN = 1.7                                           # Volume level
